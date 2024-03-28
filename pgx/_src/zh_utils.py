@@ -199,7 +199,7 @@ for from_ in range(64):
 
 INIT_LEGAL_ACTION_MASK = np.zeros(64 * 77, dtype=np.bool_)
 # fmt: off
-ixs = [89, 90, 652, 656, 673, 674, 1257, 1258, 1841, 1842, 2425, 2426, 3009, 3010, 3572, 3576, 3593, 3594, 4177, 4178]
+ixs = [93, 94, 684, 688, 709, 710, 1325, 1326, 1941, 1942, 2557, 2558, 3173, 3174, 3764, 3768, 3789, 3790, 4405, 4406]
 # fmt: on
 INIT_LEGAL_ACTION_MASK[ixs] = True
 assert INIT_LEGAL_ACTION_MASK.shape == (64 * 77,)

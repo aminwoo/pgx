@@ -120,7 +120,7 @@ class State(core.State):
     rewards: Array = jnp.float32([0.0, 0.0])
     terminated: Array = FALSE
     truncated: Array = FALSE
-    legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 64 * 73 = 4672
+    legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 64 * 77 = 4672
     observation: Array = jnp.zeros((8, 8, 19), dtype=jnp.float32)
     _step_count: Array = jnp.int32(0)
     # --- Chess specific ---
@@ -131,7 +131,7 @@ class State(core.State):
     _can_castle_king_side: Array = jnp.ones(2, dtype=jnp.bool_)
     _en_passant: Array = jnp.int32(-1)  # En passant target. Flips.
     # --- Crazyhouse Variant --- 
-    _pocket: Array = jnp.zeros((2, 5), dtype=jnp.int32) 
+    _pocket: Array = jnp.zeros((2, 6), dtype=jnp.int32) 
     # # of moves since the last piece capture or pawn move
     _halfmove_count: Array = jnp.int32(0)
     _fullmove_count: Array = jnp.int32(1)  # increase every black move
@@ -155,7 +155,7 @@ class Action:
 
     @staticmethod
     def _from_label(label: Array):
-        """We use AlphaZero style label with channel-last representation: (8, 8, 73)
+        """We use AlphaZero style label with channel-last representation: (8, 8, 77)
 
           77 = drops (4) + queen moves (56) + knight moves (8) + underpromotions (3 * 3)
 
@@ -180,6 +180,7 @@ class Action:
 
     def _to_label(self):
         plane = PLANE_MAP[self.from_, self.to]
+        plane = jax.lax.select(self.drop > 0, self.drop + 71, plane)
         # plane = jax.lax.select(self.underpromotion >= 0, ..., plane)
         return jnp.int32(self.from_) * 77 + jnp.int32(plane)
 
@@ -292,6 +293,12 @@ def _apply_move(state: State, a: Action):
             jnp.int32(-1),
         )
     )
+    # if capture update drops
+    captured_piece = jax.lax.select(is_en_passant, PAWN, -state._board[a.to])
+    state = state.replace( # type: ignore
+        _pocket=jax.lax.select(captured_piece > 0, state._pocket.at[0, captured_piece].add(1), state._pocket)
+    )
+
     # update counters
     captured = (state._board[a.to] < 0) | (is_en_passant)
     state = state.replace(  # type: ignore
@@ -386,6 +393,11 @@ def _apply_move(state: State, a: Action):
     # update possible piece positions
     ix = jnp.argmin(jnp.abs(state._possible_piece_positions[0, :] - a.from_))
     state = state.replace(_possible_piece_positions=state._possible_piece_positions.at[0, ix].set(a.to))  # type: ignore
+
+    state = state.replace( # type: ignore
+        _pocket=jax.lax.select(a.drop < 0, state._pocket, state._pocket.at[0, a.drop].add(-1))
+    )
+
     return state
 
 
@@ -426,6 +438,25 @@ def _legal_action_mask(state):
         ok &= ~_is_checking(next_s)
 
         return ok
+    
+    def is_drop_legal(a: Action):
+        next_s = _flip(_apply_move(state, a))
+        return ~_is_checking(next_s)
+    
+    @jax.vmap
+    def legal_drops(from_): 
+        piece = state._board[from_]
+
+        @jax.vmap
+        def legal_labels(drop):
+            a = Action(from_=from_, to=from_, drop=drop)
+            return jax.lax.select(
+                (state._pocket[0, drop] > 0) & (from_ >= 0) & (piece == 0) & ~(drop == PAWN & ((from_ % 8 == 7) | (from_ % 8 == 0))) & is_drop_legal(a),
+                a._to_label(),
+                jnp.int32(-1),
+            )
+
+        return legal_labels(jnp.arange(1, 6))
 
     @jax.vmap
     def legal_norml_moves(from_):
@@ -447,7 +478,7 @@ def _legal_action_mask(state):
         # plane = 0 ... 8
         @jax.vmap
         def make_labels(from_):
-            return from_ * 73 + jnp.arange(9)
+            return from_ * 77 + jnp.arange(9)
 
         labels = make_labels(jnp.int32([6, 14, 22, 30, 38, 46, 54, 62])).flatten()
 
@@ -491,7 +522,7 @@ def _legal_action_mask(state):
             return ~_is_checking(_flip(_apply_move(state, Action._from_label(label))))
 
         ok &= ~_is_checking(_flip(state))
-        ok &= is_ok(jnp.int32([2366, 2367])).all()
+        ok &= is_ok(jnp.int32([2494, 2495])).all()
 
         return ok
 
@@ -508,7 +539,7 @@ def _legal_action_mask(state):
             return ~_is_checking(_flip(_apply_move(state, Action._from_label(label))))
 
         ok &= ~_is_checking(_flip(state))
-        ok &= is_ok(jnp.int32([2364, 2365])).all()
+        ok &= is_ok(jnp.int32([2492, 2493])).all()
 
         return ok
 
@@ -517,12 +548,9 @@ def _legal_action_mask(state):
     mask = jnp.zeros(64 * 77 + 1, dtype=jnp.bool_)
     mask = mask.at[actions].set(TRUE)
 
-    # drops
-    
-
     # castling
-    mask = mask.at[2364].set(jax.lax.select(can_castle_queen_side(), TRUE, mask[2364]))
-    mask = mask.at[2367].set(jax.lax.select(can_castle_king_side(), TRUE, mask[2367]))
+    mask = mask.at[2492].set(jax.lax.select(can_castle_queen_side(), TRUE, mask[2492]))
+    mask = mask.at[2495].set(jax.lax.select(can_castle_king_side(), TRUE, mask[2495]))
 
     # set en passant
     actions = legal_en_passants()
@@ -530,6 +558,10 @@ def _legal_action_mask(state):
 
     # set underpromotions
     actions = legal_underpromotions(mask)
+    mask = mask.at[actions].set(TRUE)
+
+    # set drops
+    actions = legal_drops(jnp.arange(64)).flatten() 
     mask = mask.at[actions].set(TRUE)
 
     return mask[:-1]
@@ -699,3 +731,52 @@ def _update_zobrist_hash(state: State, action: Action):
         _zobrist_hash=hash_,
     )
 
+
+
+if __name__ == "__main__":
+    '''actions = [Action(from_=32, to=40, underpromotion=-1, drop=-1),
+               Action(from_=32, to=48, underpromotion=-1, drop=-1),
+               Action(from_=32, to=16, underpromotion=-1, drop=-1),
+               Action(from_=32, to=24, underpromotion=-1, drop=-1),
+               Action(from_=1, to=2, underpromotion=-1, drop=-1),
+                Action(from_=1, to=3, underpromotion=-1, drop=-1),
+                Action(from_=8, to=2, underpromotion=-1, drop=-1),
+                Action(from_=8, to=18, underpromotion=-1, drop=-1),
+                Action(from_=9, to=10, underpromotion=-1, drop=-1),
+                Action(from_=9, to=11, underpromotion=-1, drop=-1),
+                Action(from_=17, to=18, underpromotion=-1, drop=-1),
+                Action(from_=17, to=19, underpromotion=-1, drop=-1),
+                Action(from_=25, to=26, underpromotion=-1, drop=-1),
+                Action(from_=25, to=27, underpromotion=-1, drop=-1),
+                Action(from_=33, to=34, underpromotion=-1, drop=-1),
+                Action(from_=33, to=35, underpromotion=-1, drop=-1),
+                Action(from_=41, to=42, underpromotion=-1, drop=-1),
+                Action(from_=41, to=43, underpromotion=-1, drop=-1),
+                Action(from_=48, to=42, underpromotion=-1, drop=-1),
+                Action(from_=48, to=58, underpromotion=-1, drop=-1),
+                Action(from_=49, to=50, underpromotion=-1, drop=-1),
+                Action(from_=49, to=51, underpromotion=-1, drop=-1),
+                Action(from_=57, to=58, underpromotion=-1, drop=-1),
+                Action(from_=57, to=59, underpromotion=-1, drop=-1),]
+    for a in actions:
+        #a = Action._from_label(652)
+        print(a)
+        print(a._to_label())'''
+
+    def act_randomly(rng_key, obs, mask):
+        """Ignore observation and choose randomly from legal actions"""
+        del obs
+        probs = mask / mask.sum()
+        logits = jnp.maximum(jnp.log(probs), jnp.finfo(probs.dtype).min)
+        return jax.random.categorical(rng_key, logits=logits, axis=-1)
+
+    key = jax.random.PRNGKey(42)
+    env = Crazyhouse()
+    state = env.init(key)
+
+    while not (state.terminated | state.truncated):
+        key, subkey = jax.random.split(key)
+        action = act_randomly(subkey, state.observation, state.legal_action_mask)
+        print(Action._from_label(action))
+        state = env.step(state, action)  # state.reward (2,)
+        print(state._pocket)
