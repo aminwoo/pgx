@@ -135,7 +135,7 @@ class State(core.State):
     _en_passant: Array = jnp.int32([-1, -1])  # En passant target. Flips.
     # --- Bughouse specific --- 
     _pocket: Array = jnp.zeros((2, 2, 6), dtype=jnp.int32)
-    _clock: Array = jnp.int32([[1100, 1200], [1200, 1100]])
+    _clock: Array = jnp.int32([[1200, 1200], [1200, 1200]])
     # # of moves since the last piece capture or pawn move
     _halfmove_count: Array = jnp.int32([0, 0])
     _fullmove_count: Array = jnp.int32([1, 1])  # increase every black move
@@ -618,10 +618,10 @@ def _legal_action_mask(state: State):
     actions = legal_drops(jnp.arange(64), 0).flatten() 
     mask = mask.at[actions].set(TRUE)
 
+    # unset -1 action
     mask.at[4992].set(FALSE)
 
     actions = legal_norml_moves(jnp.arange(64), 1).flatten()  # include -1
-    # +1 is to avoid setting True to the last element
     mask = mask.at[actions].set(TRUE)
 
     # castling
@@ -639,6 +639,9 @@ def _legal_action_mask(state: State):
     # set drops
     actions = legal_drops(jnp.arange(64), 1).flatten() 
     mask = mask.at[actions].set(TRUE)
+
+    # PASS action
+    mask = mask.at[-1].set(_time_advantage(state) > 0)
 
     return mask
 
@@ -823,32 +826,3 @@ def _observe(state: State, player_id: Array):
         axis=2
     )
     return planes.transpose((1, 2, 0))
-
-if __name__ == "__main__":
-    key = jax.random.PRNGKey(42)
-    key, subkey = jax.random.split(key)
-
-    env = Bughouse()
-    state = env.init(key)
-    print(state.observation.shape)
-    print(state.observation[:,:,32])
-
-    '''state = env.step(state, 2591)
-    state = env.step(state, 2591)
-
-    state = env.step(state, 3175)
-    state = env.step(state, 3175)
-
-    state = env.step(state, 1917)
-    state = env.step(state, 94)
-    state = env.step(state, 3295)
-
-    print(state.terminated)
-    print(state.rewards)
-
-    actions = [] 
-    for i in range(2 * 64 * 78 + 1):
-        if state.legal_action_mask[i]:
-            actions.append(Action._from_label(i)._to_string())
-            print(i, Action._from_label(i)._to_string()) '''
-

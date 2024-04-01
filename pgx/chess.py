@@ -747,3 +747,13 @@ def _to_fen(state: State):
         DeprecationWarning,
     )
     return to_fen(state)
+
+
+if __name__ == "__main__":
+    ixs = [2366, 2367, 2364, 2365] 
+    #ixs = [2364, 2367, 89, 90, 652, 656, 673, 674, 1257, 1258, 1841, 1842, 2425, 2426, 3009, 3010, 3572, 3576, 3593, 3594, 4177, 4178]
+    for i in ixs:
+        a = Action._from_label(i)
+        print(a)
+        #a = Action(from_=6, to=7, underpromotion=2)
+        #print(a._to_label())

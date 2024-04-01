@@ -38,6 +38,8 @@ FALSE = jnp.bool_(False)
 # Hyphen - is used to represent that there is a different original game source, and
 # Underscore - is used for the other cases.
 EnvId = Literal[
+    "crazyhouse",
+    "bughouse",
     "2048",
     "animal_shogi",
     "backgammon",

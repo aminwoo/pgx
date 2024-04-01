@@ -8,7 +8,6 @@ from pgx.bughouse import (
     _flip_pos,
     _legal_action_mask,
     _observe,
-    _possible_piece_positions,
     _update_history,
     _zobrist_hash,
 )
@@ -212,4 +211,7 @@ def to_fen(state: State):
 
     return fn(0) + "|" + fn(1)
 
-#print(from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/pp w KQkq - 0 1|rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/pp w KQkq - 0 1"))
+
+def make_policy_labels(): 
+    labels = [Action._from_label(i)._to_string() for i in range(9985)] 
+    return labels
