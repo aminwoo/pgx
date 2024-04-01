@@ -197,14 +197,15 @@ for from_ in range(64):
         assert len(bet) <= 6
         BETWEEN[from_, to, : len(bet)] = bet
 
-INIT_LEGAL_ACTION_MASK = np.zeros(2 * 64 * 77, dtype=np.bool_)
+INIT_LEGAL_ACTION_MASK = np.zeros(2 * 64 * 78 + 1, dtype=np.bool_)
 # fmt: off
-ixs = [93, 94, 684, 688, 709, 710, 1325, 1326, 1941, 1942, 2557, 2558, 3173, 3174, 3764, 3768, 3789, 3790, 4405, 4406]
- #      5021, 5022, 5612, 5616, 5637, 5638, 6253, 6254, 6869, 6870, 7485, 7486, 8101, 8102, 8692, 8696, 8717, 8718, 9333, 9334]
+ixs = [94, 95, 692, 696, 718, 719, 1342, 1343, 1966, 1967, 2590, 2591, 3214, 3215, 3812, 3816, 3838, 3839, 4462, 4463, 
+       5086, 5087, 5684, 5688, 5710, 5711, 6334, 6335, 6958, 6959, 7582, 7583, 8206, 8207, 8804, 8808, 8830, 8831, 9454, 9455]
+
 # fmt: on
 INIT_LEGAL_ACTION_MASK[ixs] = True
-assert INIT_LEGAL_ACTION_MASK.shape == (2 * 64 * 77,)
-assert INIT_LEGAL_ACTION_MASK.sum() == 20
+assert INIT_LEGAL_ACTION_MASK.shape == (2 * 64 * 78 + 1,)
+assert INIT_LEGAL_ACTION_MASK.sum() == 40
 
 TO_MAP = jnp.array(TO_MAP)
 PLANE_MAP = jnp.array(PLANE_MAP)

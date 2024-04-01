@@ -3,6 +3,7 @@ import jax.numpy as jnp
 
 from pgx.bughouse import (
     State,
+    Action,
     _check_termination,
     _flip_pos,
     _legal_action_mask,
@@ -14,89 +15,119 @@ from pgx.bughouse import (
 
 TRUE = jnp.bool_(True)
 
+def to_string(action):
+    if action.sit:
+        return "pass"
+    underpromotions = ["r", "b", "n"]
+    pieces = ["", "p", "n", "b", "r", "q", "k"]
+    squares = ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", 
+               "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", 
+               "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", 
+               "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", 
+               "e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", 
+               "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", 
+               "g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8",
+               "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", ]
+    
+    ret = str(action.board_num)
+    if action.drop > 0: 
+        ret += pieces[action.drop].upper() + '@' + squares[action.to]
+    else:
+        ret += squares[action.from_] + squares[action.to]
+    if action.underpromotion >= 0:
+        ret += underpromotions[action.underpromotion]
+    return ret
 
 def from_fen(fen: str):
-    """Restore state from FEN
+    _turn = jnp.int32([0, 0])
+    _board = jnp.zeros((2, 64), dtype=jnp.int32)
+    _can_castle_queen_side = jnp.ones((2, 2), dtype=jnp.bool_)
+    _can_castle_king_side = jnp.ones((2, 2), dtype=jnp.bool_)
+    _en_passant = jnp.int32([-1, -1]) 
+    _pocket = jnp.zeros((2, 2, 6), dtype=jnp.int32)
+    _clock = jnp.int32([[1200, 1200], [1200, 1200]])
+    _halfmove_count  = jnp.int32([0, 0])
+    _fullmove_count = jnp.int32([1, 1])  
 
-    >>> state = _from_fen("rnbqkbnr/pppppppp/8/8/8/P7/1PPPPPPP/RNBQKBNR[pp] w KQkq e3 0 1")
-    >>> _rotate(state._board.reshape(8, 8))
-    Array([[-4, -2, -3, -5, -6, -3, -2, -4],
-           [-1, -1, -1, -1, -1, -1, -1, -1],
-           [ 0,  0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0,  0],
-           [ 1,  0,  0,  0,  0,  0,  0,  0],
-           [ 0,  1,  1,  1,  1,  1,  1,  1],
-           [ 4,  2,  3,  5,  6,  3,  2,  4]], dtype=int32)
-    >>> state._en_passant
-    Array(34, dtype=int32)
-    >>> state = _from_fen("rnbqkbnr/pppppppp/8/8/8/P7/1PPPPPPP/RNBQKBNR b KQkq e3 0 1")
-    >>> _rotate(state._board.reshape(8, 8))
-    Array([[-4, -2, -3, -5, -6, -3, -2, -4],
-           [ 0, -1, -1, -1, -1, -1, -1, -1],
-           [-1,  0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0,  0],
-           [ 0,  0,  0,  0,  0,  0,  0,  0],
-           [ 1,  1,  1,  1,  1,  1,  1,  1],
-           [ 4,  2,  3,  5,  6,  3,  2,  4]], dtype=int32)
-    >>> state._en_passant
-    Array(37, dtype=int32)
-    """
+    MAP = {'p': 1, 'n': 2, 'b': 3, 'r': 4, 'q': 5}
+
     fens = fen.split("|")
-    board, turn, castling, en_passant, halfmove_cnt, fullmove_cnt = fens[0].split()
-    board, turn, castling, en_passant, halfmove_cnt, fullmove_cnt = fens[1].split()
-    arr = []
-    for line in board.split("/"):
-        for c in line:
-            if str.isnumeric(c):
-                for _ in range(int(c)):
-                    arr.append(0)
+    for board_num in range(2): 
+        pieces, turn, castling, en_passant, halfmove_count, fullmove_count = fens[board_num].split()
+        _halfmove_count = _halfmove_count.at[board_num].set(jnp.int32(halfmove_count))
+        _fullmove_count = _fullmove_count.at[board_num].set(jnp.int32(fullmove_count))
+        pieces = pieces.split("/")
+        pocket = pieces[-1]
+        for p in pocket: 
+            if p.isupper():
+                _pocket = _pocket.at[board_num, 0, MAP[p.lower()]].add(1)
             else:
-                ix = "pnbrqk".index(str.lower(c)) + 1
-                if str.islower(c):
-                    ix *= -1
-                arr.append(ix)
-    can_castle_queen_side = jnp.zeros(2, dtype=jnp.bool_)
-    can_castle_king_side = jnp.zeros(2, dtype=jnp.bool_)
-    if "Q" in castling:
-        can_castle_queen_side = can_castle_queen_side.at[0].set(TRUE)
-    if "q" in castling:
-        can_castle_queen_side = can_castle_queen_side.at[1].set(TRUE)
-    if "K" in castling:
-        can_castle_king_side = can_castle_king_side.at[0].set(TRUE)
-    if "k" in castling:
-        can_castle_king_side = can_castle_king_side.at[1].set(TRUE)
-    if turn == "b":
-        can_castle_queen_side = can_castle_queen_side[::-1]
-        can_castle_king_side = can_castle_king_side[::-1]
-    mat = jnp.int32(arr).reshape(8, 8)
-    if turn == "b":
-        mat = -jnp.flip(mat, axis=0)
-    ep = jnp.int32(-1) if en_passant == "-" else jnp.int32("abcdefgh".index(en_passant[0]) * 8 + int(en_passant[1]) - 1)
-    if turn == "b" and ep >= 0:
-        ep = _flip_pos(ep)
+                _pocket = _pocket.at[board_num, 1, MAP[p.lower()]].add(1)
+
+        pieces = pieces[:-1]
+        arr = []
+        for line in pieces:
+            for c in line:
+                if str.isnumeric(c):
+                    for _ in range(int(c)):
+                        arr.append(0)
+                else:
+                    ix = "pnbrqk".index(str.lower(c)) + 1
+                    if str.islower(c):
+                        ix *= -1
+                    arr.append(ix)
+        if "Q" in castling:
+            _can_castle_queen_side = _can_castle_queen_side.at[board_num, 0].set(TRUE)
+        if "q" in castling:
+            _can_castle_queen_side = _can_castle_queen_side.at[board_num, 1].set(TRUE)
+        if "K" in castling:
+            _can_castle_king_side = _can_castle_king_side.at[board_num, 0].set(TRUE)
+        if "k" in castling:
+            _can_castle_king_side = _can_castle_king_side.at[board_num, 1].set(TRUE)
+        if turn == "b":
+            _can_castle_queen_side.at[board_num].set(_can_castle_queen_side[board_num][::-1])
+            _can_castle_king_side.at[board_num].set(_can_castle_king_side[board_num][::-1])
+
+        mat = jnp.int32(arr).reshape(8, 8)
+        if turn == "b":
+            mat = -jnp.flip(mat, axis=0)
+            _turn = _turn.at[board_num].set(1)
+            _pocket = _pocket.at[board_num].set(_pocket[board_num][::-1])
+        else:
+            _turn = _turn.at[board_num].set(0)
+
+        _en_passant = _en_passant.at[board_num].set(jnp.int32(-1) if en_passant == "-" else jnp.int32("abcdefgh".index(en_passant[0]) * 8 + int(en_passant[1]) - 1))
+        if turn == "b" and _en_passant[board_num] >= 0:
+            _en_passant = _en_passant.at[board_num].set(_flip_pos(_en_passant[board_num]))
+
+        _board = _board.at[board_num].set(jnp.rot90(mat, k=3).flatten()) 
+    
     state = State(  # type: ignore
-        _board=jnp.rot90(mat, k=3).flatten(),
-        _turn=jnp.int32(0) if turn == "w" else jnp.int32(1),
-        _can_castle_queen_side=can_castle_queen_side,
-        _can_castle_king_side=can_castle_king_side,
-        _en_passant=ep,
-        _halfmove_count=jnp.int32(halfmove_cnt),
-        _fullmove_count=jnp.int32(fullmove_cnt),
+        _board=_board,
+        _turn=_turn,
+        _can_castle_queen_side=_can_castle_queen_side,
+        _can_castle_king_side=_can_castle_king_side,
+        _en_passant=_en_passant,
+        _halfmove_count=_halfmove_count,
+        _fullmove_count=_fullmove_count,
+        _pocket=_pocket,
+        _clock=_clock,
     )
-    state = state.replace(_possible_piece_positions=jax.jit(_possible_piece_positions)(state))  # type: ignore
+
     state = state.replace(  # type: ignore
         legal_action_mask=jax.jit(_legal_action_mask)(state),
     )
-    state = state.replace(_zobrist_hash=_zobrist_hash(state))  # type: ignore
-    #state = _update_history(state)
+    state = state.replace(_zobrist_hash=state._zobrist_hash.at[0].set(_zobrist_hash(state, 0)))  # type: ignore
+    state = state.replace(_zobrist_hash=state._zobrist_hash.at[1].set(_zobrist_hash(state, 1)))  # type: ignore
+    state = _update_history(state, 0)
+    state = _update_history(state, 1)
     state = jax.jit(_check_termination)(state)
     state = state.replace(observation=jax.jit(_observe)(state, state.current_player))  # type: ignore
     return state
 
 
 def to_fen(state: State):
+
     """Convert state into FEN expression.
 
     - Board
@@ -180,3 +211,5 @@ def to_fen(state: State):
         return fen
 
     return fn(0) + "|" + fn(1)
+
+#print(from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/pp w KQkq - 0 1|rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/pp w KQkq - 0 1"))
