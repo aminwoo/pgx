@@ -25,7 +25,6 @@ from pgx._src.bughouse_utils import (  # type: ignore
     CAN_MOVE,
     CAN_MOVE_ANY,
     INIT_LEGAL_ACTION_MASK,
-    INIT_POSSIBLE_PIECE_POSITIONS,
     PLANE_MAP,
     TO_MAP,
     ZOBRIST_BOARD,
@@ -136,7 +135,7 @@ class State(core.State):
     _en_passant: Array = jnp.int32([-1, -1])  # En passant target. Flips.
     # --- Bughouse specific --- 
     _pocket: Array = jnp.zeros((2, 2, 6), dtype=jnp.int32)
-    _clock: Array = jnp.int32([[1200, 1200], [1200, 1200]])
+    _clock: Array = jnp.int32([[1100, 1200], [1200, 1100]])
     # # of moves since the last piece capture or pawn move
     _halfmove_count: Array = jnp.int32([0, 0])
     _fullmove_count: Array = jnp.int32([1, 1])  # increase every black move
@@ -150,7 +149,7 @@ class State(core.State):
         return "bughouse"
     
     @staticmethod
-    def _from_fen(fen: str):
+    def _from_fen(fen: str, *args):
         from pgx.experimental.bughouse import from_fen
 
         return from_fen(fen)
@@ -404,24 +403,6 @@ def _apply_move(state: State, a: Action):
             )
         ),
     )
-    # promotion to queen
-    piece = jax.lax.select(
-        piece == PAWN & (a.from_ % 8 == 6) & (a.underpromotion < 0),
-        QUEEN,
-        piece,
-    )
-    # underpromotion
-    piece = jax.lax.select(
-        a.underpromotion < 0,
-        piece,
-        jnp.int32([ROOK, BISHOP, KNIGHT])[a.underpromotion],
-    )
-    # drop
-    piece = jax.lax.select(
-        a.drop < 0, 
-        piece, 
-        a.drop,
-    )
 
     # set promotion mask 
     # if we captured promoted piece
@@ -438,9 +419,28 @@ def _apply_move(state: State, a: Action):
     )
     # if we promote new piece
     state = jax.lax.cond(
-        a.underpromotion >= 0 | (piece == PAWN & (a.from_ % 8 == 6) & (a.underpromotion < 0)),
+        (piece == PAWN) & (a.from_ % 8 == 6) & (a.drop < 0),
         lambda: state.replace(_promoted_pieces=state._promoted_pieces.at[a.board_num, a.to].set(TRUE)),  # type: ignore
         lambda: state,
+    )
+
+    # promotion to queen
+    piece = jax.lax.select(
+        (piece == PAWN) & (a.from_ % 8 == 6) & (a.underpromotion < 0) & (a.drop < 0),
+        QUEEN,
+        piece,
+    )
+    # underpromotion
+    piece = jax.lax.select(
+        a.underpromotion < 0,
+        piece,
+        jnp.int32([ROOK, BISHOP, KNIGHT])[a.underpromotion],
+    )
+    # drop
+    piece = jax.lax.select(
+        a.drop < 0, 
+        piece, 
+        a.drop,
     )
 
     # actually move
@@ -478,6 +478,7 @@ def _flip(state: State, board_num: Array) -> State:
         _can_castle_king_side=state._can_castle_king_side.at[board_num].set(state._can_castle_king_side[board_num][::-1]),
         _pocket=state._pocket.at[board_num].set(state._pocket[board_num][::-1]),
         _promoted_pieces=state._promoted_pieces.at[board_num].set(jnp.flip(state._promoted_pieces[board_num].reshape(8, 8), axis=1).flatten()),
+        _clock=state._clock.at[board_num].set(state._clock[board_num][::-1])
     )
 
 
@@ -670,12 +671,6 @@ def _is_pseudo_legal(state: State, a: Action):
     return (a.to >= 0) & ok
 
 
-def _possible_piece_positions(state: State, board_num: Array):
-    my_pos = jnp.nonzero(state._board[board_num] > 0, size=16, fill_value=-1)[0].astype(jnp.int32)
-    opp_pos = jnp.nonzero(_flip(state, board_num)._board[board_num] > 0, size=16, fill_value=-1)[0].astype(jnp.int32)
-    return jnp.vstack((my_pos, opp_pos))
-
-
 def _zobrist_hash(state, board_num: Array):
     """
     >>> state = State()
@@ -761,6 +756,9 @@ def _update_zobrist_hash(state: State, a: Action):
         _zobrist_hash=state._zobrist_hash.at[a.board_num].set(hash_),
     )
 
+def _time_advantage(state: State): 
+    return state._clock[0, 1 - jnp.int32(_on_turn(state, 0))] - state._clock[1, jnp.int32(_on_turn(state, 1))]
+
 def _observe(state: State, player_id: Array):
     ones = jnp.ones((1, 8, 8), dtype=jnp.float32)
 
@@ -777,10 +775,15 @@ def _observe(state: State, player_id: Array):
         my_drops = ones * pocket[0][1:, None, None]
         opp_drops = ones * pocket[1][1:, None, None]
 
-        on_turn = jax.lax.select(_on_turn(state, board_num), 1, 0)
-        on_turn = ones * jax.lax.select(state.current_player == player_id, on_turn, 1 - on_turn) 
+        h = state._hash_history[board_num, 0, :]
+        rep = (state._hash_history == h).all(axis=1).sum() - 1
+        rep = jax.lax.select((h == 0).all(), 0, rep)
+        rep0 = ones * (rep == 0)
+        rep1 = ones * (rep >= 1)
 
-        promoted = ones
+        on_turn = ones * jax.lax.select(_on_turn(state, board_num), 1, 0)
+
+        promoted = state._promoted_pieces[board_num].reshape((1, 8, 8))
 
         en_passant = jnp.zeros((64), dtype=jnp.float32)
         en_passant = en_passant.at[state._en_passant[board_num]].set(1)
@@ -790,12 +793,15 @@ def _observe(state: State, player_id: Array):
         my_king_side_castling_right = ones * state._can_castle_king_side[board_num][0]
         opp_queen_side_castling_right = ones * state._can_castle_queen_side[board_num][1]
         opp_king_side_castling_right = ones * state._can_castle_king_side[board_num][1]
-        time_advantage = ones * (0.5) 
+
+        time_advantage = ones * (0.5 + _time_advantage(state) / 300)
 
         return jnp.vstack(
             [
                 my_pieces, 
                 opp_pieces,
+                rep0,
+                rep1,
                 my_drops,
                 opp_drops,
                 on_turn, 
@@ -819,70 +825,30 @@ def _observe(state: State, player_id: Array):
     return planes.transpose((1, 2, 0))
 
 if __name__ == "__main__":
-    for i in range(1):
-        key = jax.random.PRNGKey(i)
-        key, subkey = jax.random.split(key)
+    key = jax.random.PRNGKey(42)
+    key, subkey = jax.random.split(key)
 
-        #positions = jnp.int32([[ 0,  2, 18,  9, 16, 17, 25, 26, 32, 33, 40, 43, 48, 49, 56, 59], [5]])
-        a = Action(from_=11, to=11, underpromotion=-1, drop=2, board_num=1, sit=False)
-        print()
+    env = Bughouse()
+    state = env.init(key)
+    print(state.observation.shape)
+    print(state.observation[:,:,32])
 
-        # Load the environment
-        env = Bughouse()
-        #state = env.init(key)
+    '''state = env.step(state, 2591)
+    state = env.step(state, 2591)
 
-        '''king = [2366, 2367]
-        queen = [2364, 2365] 
-        print(Action(from_=32, to=40, board_num=0)._to_label())
-        print(Action(from_=32, to=48, board_num=0)._to_label())
-        print(Action(from_=32, to=16, board_num=0)._to_label())
-        print(Action(from_=32, to=24, board_num=0)._to_label())'''
-        #print(Action._from_label(2366))
-        #print(Action._from_label(2367))
-        #print(Action._from_label(2364))
-        #print(Action._from_label(2365))
-        
-        state = State._from_fen("rnbqk2r/pppp1p1p/4p3/4P1p1/P1P2n2/2QP4/1P3PPP/R1B1KBNR/ b KQkq - 0 8|rnbq1knr/1ppp1ppp/3bp3/p7/1N3P1P/P1NP1b2/1PPQP1P1/R1B1KBNR/ w KQ - 7 8")
-        
-        #print(Action(from_=32, to=48, board_num=0)._to_label())
-        #print(type of(state))
-        #state = env.step(state, 2527)
-        #print(state._to_fen())
-        #exit()
-        #print(state._possible_piece_positions)
-        actions = [] 
-        for i in range(2 * 64 * 78 + 1):
-            if state.legal_action_mask[i]:
-                actions.append(Action._from_label(i)._to_string())
-                print(i, Action._from_label(i)._to_string()) 
-        print(sorted(actions))
+    state = env.step(state, 3175)
+    state = env.step(state, 3175)
 
-        '''label = 5231
-        label %= 4992
-        from_, plane = label // 77, label % 77
-        #print(from_, plane)
-        #print(PLANE_MAP[3, 3])
-        print(Action._from_label(2492)._to_string())
-        print(Action._from_label(2495)._to_string())
+    state = env.step(state, 1917)
+    state = env.step(state, 94)
+    state = env.step(state, 3295)
 
-        print(Action._from_label(7420)._to_string())
-        print(Action._from_label(7423)._to_string())
-        #a = Action._from_label(5232)
-        #print(a)
-        #a = Action(from_=3, to=3, drop=1, board_num=1)
-        #print(a._to_label())
-        #a = Action._from_label(a._to_label())
-        #print(a._to_label())
+    print(state.terminated)
+    print(state.rewards)
 
-        def act_randomly(rng_key, obs, mask):
-            """Ignore observation and choose randomly from legal actions"""
-            del obs
-            probs = mask / mask.sum()
-            logits = jnp.maximum(jnp.log(probs), jnp.finfo(probs.dtype).min)
-            return jax.random.categorical(rng_key, logits=logits, axis=-1)
+    actions = [] 
+    for i in range(2 * 64 * 78 + 1):
+        if state.legal_action_mask[i]:
+            actions.append(Action._from_label(i)._to_string())
+            print(i, Action._from_label(i)._to_string()) '''
 
-        while not (state.terminated | state.truncated):
-            action = act_randomly(subkey, state.observation, state.legal_action_mask)
-            print(Action._from_label(action)._to_string())
-            state = env.step(state, action)  # state.reward (2,)
-            break'''
