@@ -350,6 +350,10 @@ def make(env_id: EnvId):  # noqa: C901
         from pgx.chess import Chess
 
         return Chess()
+    elif env_id == "crazyhouse":
+        from pgx.crazyhouse import Crazyhouse
+        
+        return Crazyhouse()
     elif env_id == "bughouse":
         from pgx.bughouse import Bughouse
         
