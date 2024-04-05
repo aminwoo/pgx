@@ -19,7 +19,6 @@ import time
 from functools import partial
 from typing import NamedTuple
 
-import haiku as hk
 import jax
 import jax.numpy as jnp
 import mctx

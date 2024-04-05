@@ -36,10 +36,8 @@ from pgx._src.bughouse_utils import (  # type: ignore
 from pgx._src.struct import dataclass
 from pgx._src.types import Array, PRNGKey
 
-vmap_slice = partial(jax.vmap, in_axes=(0, None))
-
 INIT_ZOBRIST_HASH = jnp.uint32([1172276016, 1112364556])
-MAX_TERMINATION_STEPS = 512  # from AZ paper
+MAX_TERMINATION_STEPS = 1024 
 
 TRUE = jnp.bool_(True)
 FALSE = jnp.bool_(False)
@@ -123,9 +121,9 @@ class State(core.State):
     rewards: Array = jnp.float32([0.0, 0.0])
     terminated: Array = FALSE
     truncated: Array = FALSE 
-    legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 2 * 64 * 77 = 9856
+    legal_action_mask: Array = INIT_LEGAL_ACTION_MASK  # 2 * 64 * 78 + 1 = 9985
     observation: Array = jnp.zeros((8, 16, 32), dtype=jnp.float32)
-    _step_count: Array = jnp.int32([0, 0])
+    _step_count: Array = jnp.int32(0)
     # --- Chess specific ---
     _turn: Array = jnp.int32([0, 0])
     _board: Array = jnp.int32([INIT_BOARD, INIT_BOARD]) # From top left. like FEN
@@ -223,7 +221,7 @@ class Bughouse(core.Env):
     def _init(self, key: PRNGKey) -> State:
         current_player = jnp.int32(jax.random.bernoulli(key))
         state = State(current_player=current_player)  # type: ignore
-        #state = state.replace(legal_action_mask=jax.lax.select(current_player == 0, state.legal_action_mask.at[4992:].set(FALSE), state.legal_action_mask.at[:4992].set(FALSE))) # type: ignore
+        state = _mask_moves(state)
         return state
 
     def _step(self, state: core.State, action: Array, key) -> State:
@@ -231,7 +229,7 @@ class Bughouse(core.Env):
         assert isinstance(state, State)
         state = _step(state, action)
         state = jax.lax.cond(
-            (MAX_TERMINATION_STEPS <= state._step_count[Action._from_label(action).board_num]),
+            (MAX_TERMINATION_STEPS <= state._step_count),
             # end with tie
             lambda: state.replace(terminated=TRUE),  # type: ignore
             lambda: state,
@@ -259,9 +257,11 @@ def _step(state: State, action: Array):
     a = Action._from_label(action)
 
     def _sit(state, a):
-        return state.replace(  # type: ignore
+        state = state.replace(  # type: ignore
             current_player=(state.current_player + 1) % 2,
         )
+        state = _mask_moves(state)
+        return state 
     
     def _move(state, a): 
         state = _update_zobrist_hash(state, a)
@@ -277,6 +277,7 @@ def _step(state: State, action: Array):
 
         state = _update_history(state, a.board_num)
         state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
+        state = _mask_moves(state)
         state = _check_termination(state)
         return state
 
@@ -289,23 +290,18 @@ def _update_history(state: State, board_num: Array):
     state = state.replace(_hash_history=state._hash_history.at[board_num].set(hash_hist))  # type: ignore
     return state
 
-def _on_turn(state: State, board_num: Array):
-    ret = FALSE
-    ret |= ((board_num == 0) & (state.current_player == state._turn[board_num]))
-    ret |= ((board_num == 1) & (state.current_player == 1 - state._turn[board_num]))
-    return ret
-
 def _check_termination(state: State):
     def fn(board_num: Array):
         action_mask = jax.lax.select(board_num == 0, state.legal_action_mask[:4992], state.legal_action_mask[4992:9984])
-        has_legal_action = action_mask.any() | ~_on_turn(state, board_num)
-        terminated = ~has_legal_action 
+        has_legal_action = action_mask.any() 
+        terminated = ~has_legal_action & _on_turn(state, board_num)
         rep = (state._hash_history[board_num] == state._zobrist_hash[board_num]).all(axis=1).sum() - 1
         terminated |= rep >= 2
         is_checkmate = (~has_legal_action) & _is_checking(_flip(state, board_num), board_num)
 
         return terminated, is_checkmate
     
+
     terminated_left, is_checkmate_left = fn(0) 
     terminated_right, is_checkmate_right = fn(1) 
     
@@ -468,11 +464,10 @@ def _rotate(board):
 
 
 def _flip(state: State, board_num: Array) -> State:
-    #print(-jnp.flip(state._board[board_num].reshape(8, 8), axis=1).flatten())
     return state.replace(  # type: ignore
         current_player=(state.current_player + 1) % 2,
         _board=state._board.at[board_num].set(-jnp.flip(state._board[board_num].reshape(8, 8), axis=1).flatten()),
-        _turn=state._turn.at[board_num].set((state._turn[board_num] + 1) % 2),
+        _turn=state._turn.at[board_num].set(1 - state._turn[board_num]),
         _en_passant=state._en_passant.at[board_num].set(_flip_pos(state._en_passant[board_num])),
         _can_castle_queen_side=state._can_castle_queen_side.at[board_num].set(state._can_castle_queen_side[board_num][::-1]),
         _can_castle_king_side=state._can_castle_king_side.at[board_num].set(state._can_castle_king_side[board_num][::-1]),
@@ -494,7 +489,7 @@ def _legal_action_mask(state: State):
         next_s = _flip(_apply_move(state, a), board_num)
         return ~_is_checking(next_s, board_num)
     
-    @vmap_slice
+    @partial(jax.vmap, in_axes=(0, None))
     def legal_drops(from_, board_num: Array): 
         piece = state._board[board_num, from_]
 
@@ -509,7 +504,7 @@ def _legal_action_mask(state: State):
 
         return legal_labels(jnp.arange(1, 6))
     
-    @vmap_slice
+    @partial(jax.vmap, in_axes=(0, None))
     def legal_norml_moves(from_, board_num: Array):
         piece = state._board[board_num, from_]
 
@@ -662,8 +657,8 @@ def _is_checking(state: State, board_num: Array):
 
 
 def _is_pseudo_legal(state: State, a: Action):
-    piece = state._board[a.board_num][a.from_]
-    ok = (piece >= 0) & (state._board[a.board_num][a.to] <= 0)
+    piece = state._board[a.board_num, a.from_]
+    ok = (piece >= 0) & (state._board[a.board_num, a.to] <= 0)
     ok &= (CAN_MOVE[piece, a.from_] == a.to).any()
     between_ixs = BETWEEN[a.from_, a.to]
     ok &= ((between_ixs < 0) | (state._board[a.board_num, between_ixs] == EMPTY)).all()
@@ -711,9 +706,9 @@ def _update_zobrist_hash(state: State, a: Action):
     #  - en passant, and
     #  - castling
     hash_ = state._zobrist_hash[a.board_num]
-    source_piece = state._board[a.board_num][a.from_]
+    source_piece = state._board[a.board_num, a.from_]
     source_piece = jax.lax.select(state._turn[a.board_num] == 0, source_piece + 6, (source_piece * -1) + 6)
-    destination_piece = state._board[a.board_num][a.to]
+    destination_piece = state._board[a.board_num, a.to]
     destination_piece = jax.lax.select(state._turn[a.board_num] == 0, destination_piece + 6, (destination_piece * -1) + 6)
     from_ = jax.lax.select(state._turn[a.board_num] == 0, a.from_, _flip_pos(a.from_))
     to = jax.lax.select(state._turn[a.board_num] == 0, a.to, _flip_pos(a.to))
@@ -759,8 +754,23 @@ def _update_zobrist_hash(state: State, a: Action):
         _zobrist_hash=state._zobrist_hash.at[a.board_num].set(hash_),
     )
 
+
+def _on_turn(state: State, board_num: Array):
+    ret = FALSE
+    ret |= ((board_num == 0) & (state.current_player == state._turn[board_num]))
+    ret |= ((board_num == 1) & (state.current_player == 1 - state._turn[board_num]))
+    return ret
+
+
 def _time_advantage(state: State): 
     return state._clock[0, 1 - jnp.int32(_on_turn(state, 0))] - state._clock[1, jnp.int32(_on_turn(state, 1))]
+
+def _mask_moves(state: State):
+    mask = state.legal_action_mask
+    mask = jax.lax.select(~_on_turn(state, 0), mask.at[:4992].set(FALSE), mask)
+    mask = jax.lax.select(~_on_turn(state, 1), mask.at[4992:].set(FALSE), mask)
+    mask = mask.at[9984].set(_time_advantage(state) > 0)
+    return state.replace(legal_action_mask=mask) # type: ignore
 
 def _observe(state: State, player_id: Array):
     ones = jnp.ones((1, 8, 8), dtype=jnp.float32)
@@ -826,3 +836,18 @@ def _observe(state: State, player_id: Array):
         axis=2
     )
     return planes.transpose((1, 2, 0))
+
+def _set_clock(state, clock): 
+    state = state.replace(_clock=clock)
+    state = state.replace(observation=_observe(state, state.current_player))
+    return state 
+
+def _set_current_player(state, current_player):
+    state = state.replace(current_player=current_player)
+    state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
+    state = _mask_moves(state)
+    return state
+
+def _set_board_num(state, board_num): 
+    state = state.replace(legal_action_mask=jax.lax.select(board_num == 0, state.legal_action_mask.at[4992:].set(FALSE), state.legal_action_mask.at[:4992].set(FALSE)))  # type: ignore
+    return state

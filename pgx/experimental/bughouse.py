@@ -10,15 +10,27 @@ from pgx.bughouse import (
     _observe,
     _update_history,
     _zobrist_hash,
+    _mask_moves,
 )
 
 TRUE = jnp.bool_(True)
 
 def to_string(action):
+    """Convert action label to uci format move string 
+
+    Args:
+        action (jnp.int32): Action label
+
+    Returns:
+        move_uci: move string
+    """
+    
+    # The do nothing action 
     if action.sit:
         return "pass"
+    
     underpromotions = ["r", "b", "n"]
-    pieces = ["", "p", "n", "b", "r", "q", "k"]
+    drop_pieces = ["", "p", "n", "b", "r", "q", "k"]
     squares = ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8", 
                "b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", 
                "c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8", 
@@ -26,18 +38,27 @@ def to_string(action):
                "e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8", 
                "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", 
                "g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8",
-               "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", ]
+               "h1", "h2", "h3", "h4", "h5", "h6", "h7", "h8", ""] # One extra square to account for -1
     
-    ret = str(action.board_num)
+    move_uci = str(action.board_num)
     if action.drop > 0: 
-        ret += pieces[action.drop].upper() + '@' + squares[action.to]
+        move_uci += drop_pieces[action.drop].upper() + '@' + squares[action.to]
     else:
-        ret += squares[action.from_] + squares[action.to]
+        move_uci += squares[action.from_] + squares[action.to]
     if action.underpromotion >= 0:
-        ret += underpromotions[action.underpromotion]
-    return ret
+        move_uci += underpromotions[action.underpromotion]
+    return move_uci
 
-def from_fen(fen: str):
+def from_fen(fen: str) -> State:
+    """_summary_
+
+    Args:
+        fen (str): _description_
+
+    Returns:
+        State: _description_
+    """
+    
     _turn = jnp.int32([0, 0])
     _board = jnp.zeros((2, 64), dtype=jnp.int32)
     _can_castle_queen_side = jnp.ones((2, 2), dtype=jnp.bool_)
@@ -112,10 +133,10 @@ def from_fen(fen: str):
         _pocket=_pocket,
         _clock=_clock,
     )
-
     state = state.replace(  # type: ignore
         legal_action_mask=jax.jit(_legal_action_mask)(state),
     )
+    state = _mask_moves(state)
     state = state.replace(_zobrist_hash=state._zobrist_hash.at[0].set(_zobrist_hash(state, 0)))  # type: ignore
     state = state.replace(_zobrist_hash=state._zobrist_hash.at[1].set(_zobrist_hash(state, 1)))  # type: ignore
     state = _update_history(state, 0)
@@ -210,7 +231,6 @@ def to_fen(state: State):
         return fen
 
     return fn(0) + "|" + fn(1)
-
 
 def make_policy_labels(): 
     labels = [Action._from_label(i)._to_string() for i in range(9985)] 
