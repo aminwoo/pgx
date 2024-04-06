@@ -845,6 +845,7 @@ def _set_clock(state, clock):
 def _set_current_player(state, current_player):
     state = state.replace(current_player=current_player)
     state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
+    state = state.replace(observation=_observe(state, current_player))
     state = _mask_moves(state)
     return state
 
