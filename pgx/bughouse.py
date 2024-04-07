@@ -294,14 +294,13 @@ def _check_termination(state: State):
     def fn(board_num: Array):
         action_mask = jax.lax.select(board_num == 0, state.legal_action_mask[:4992], state.legal_action_mask[4992:9984])
         has_legal_action = action_mask.any() 
-        terminated = ~has_legal_action & _on_turn(state, board_num)
+        terminated = (~has_legal_action) & _on_turn(state, board_num)
         rep = (state._hash_history[board_num] == state._zobrist_hash[board_num]).all(axis=1).sum() - 1
         terminated |= rep >= 2
-        is_checkmate = (~has_legal_action) & _is_checking(_flip(state, board_num), board_num)
+        is_checkmate = (~has_legal_action) & _on_turn(state, board_num) & _is_checking(_flip(state, board_num), board_num)
 
         return terminated, is_checkmate
     
-
     terminated_left, is_checkmate_left = fn(0) 
     terminated_right, is_checkmate_right = fn(1) 
     
@@ -712,9 +711,11 @@ def _update_zobrist_hash(state: State, a: Action):
     destination_piece = jax.lax.select(state._turn[a.board_num] == 0, destination_piece + 6, (destination_piece * -1) + 6)
     from_ = jax.lax.select(state._turn[a.board_num] == 0, a.from_, _flip_pos(a.from_))
     to = jax.lax.select(state._turn[a.board_num] == 0, a.to, _flip_pos(a.to))
-    hash_ ^= ZOBRIST_BOARD[from_, source_piece]  # Remove the piece from source
-    hash_ ^= ZOBRIST_BOARD[from_, 6]  # Make source empty
-    hash_ ^= ZOBRIST_BOARD[to, destination_piece]  # Remove the piece at target pos (including empty)
+
+    # Only for non-drop moves
+    hash_ = jax.lax.select(a.drop < 0, hash_ ^ ZOBRIST_BOARD[from_, source_piece], hash_) # Remove the piece from source
+    hash_ = jax.lax.select(a.drop < 0, hash_ ^ ZOBRIST_BOARD[from_, 6], hash_) # Make source empty
+    hash_ = jax.lax.select(a.drop < 0, hash_ ^ ZOBRIST_BOARD[to, destination_piece], hash_) # Remove the piece at target pos (including empty)
 
     # promotion to queen
     piece = state._board[a.board_num, a.from_]
@@ -732,6 +733,13 @@ def _update_zobrist_hash(state: State, a: Action):
             source_piece + 3 - a.underpromotion,
             source_piece - (3 - a.underpromotion),
         ),
+        source_piece,
+    )
+
+    #drop 
+    source_piece = jax.lax.select(
+        a.drop >= 0,
+        jax.lax.select(state._turn[a.board_num] == 0, a.drop + 6, (a.drop * -1) + 6),
         source_piece,
     )
 
@@ -852,3 +860,15 @@ def _set_current_player(state, current_player):
 def _set_board_num(state, board_num): 
     state = state.replace(legal_action_mask=jax.lax.select(board_num == 0, state.legal_action_mask.at[4992:].set(FALSE), state.legal_action_mask.at[:4992].set(FALSE)))  # type: ignore
     return state
+
+@jax.jit
+def _is_promotion(state, action):
+    a = Action._from_label(action)
+    piece = state._board[a.board_num, a.from_]
+    return (piece == PAWN) & (a.from_ % 8 == 6) & (a.drop < 0)
+
+
+def _step_time(state, delta):
+    return state.replace(  # type: ignore
+            _clock=state._clock.at[0].add(delta).at[1].add(delta)
+        )

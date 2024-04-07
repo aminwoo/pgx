@@ -9,16 +9,20 @@ class BughouseBoard(object):
         self.times = [[time_control for _ in range(2)] for _ in range(2)]
         self.board_order = []
         self.move_history = []
+        self.current_player = chess.BLACK 
         self.reset()
 
-    def __copy__(self):
-        ret = BughouseBoard(1200)
+    def legal_moves(self) -> List[str]: 
+        moves = [] 
+        if self.boards[0].turn == self.current_player: 
+            moves += ['0' + move.uci() for move in self.boards[0].legal_moves]
+        if self.boards[1].turn != self.current_player: 
+            moves += ['1' + move.uci() for move in self.boards[1].legal_moves]
+        
+        return moves
 
-        fen = self.fen()
-        ret.boards[0].set_fen(fen[0])
-        ret.boards[1].set_fen(fen[1])
-        ret.times = self.times.copy()
-        return ret
+    def is_game_over(self):
+        return self.boards[0].is_game_over() or self.boards[1].is_game_over()
     
     def is_checkmate(self): 
         return self.boards[0].is_checkmate() or self.boards[1].is_checkmate()
@@ -115,3 +119,7 @@ class BughouseBoard(object):
     
     def parse_san(self, board_num: int, move_san: str) -> chess.Move: 
         return self.boards[board_num].parse_san(move_san) 
+
+
+#board = BughouseBoard()
+#print(board.legal_moves())
