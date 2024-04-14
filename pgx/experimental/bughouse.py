@@ -170,8 +170,11 @@ def to_fen(state: State):
 
     def fn(board_num):
         pb = jnp.rot90(state._board[board_num].reshape(8, 8), k=1)
+        pocket = state._pocket[board_num]
+
         if state._turn[board_num] == 1:
             pb = -jnp.flip(pb, axis=0)
+            pocket = pocket[::-1]
         fen = ""
         # board
         for i in range(8):
@@ -192,8 +195,16 @@ def to_fen(state: State):
                 fen += str(space_length)
             if i != 7:
                 fen += "/"
-            else:
-                fen += " "
+        #pocket
+        fen += "/"
+        for i in range(2):
+            for j in range(1, 6):
+                for k in range(pocket[i, j]):
+                    if i == 0:
+                        fen += " PNBRQ"[j]
+                    else:
+                        fen += " pnbrq"[j]
+        fen += " "
         # turn
         fen += "w " if state._turn[board_num] == 0 else "b "
         # castling
