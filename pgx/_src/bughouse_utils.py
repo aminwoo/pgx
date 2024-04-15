@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import jax.random
 import numpy as np
 
-TO_MAP = -np.ones((64, 77), dtype=np.int32)
+TO_MAP = -np.ones((64, 73), dtype=np.int32)
 PLANE_MAP = -np.ones((64, 64), dtype=np.int32)  # ignores underpromotion
 # underpromotiona
 for from_ in range(64):
@@ -24,9 +24,6 @@ for from_ in range(64):
             continue
         TO_MAP[from_, plane] = to
 
-    # drops are on same square
-    for plane in range(73, 77):
-        TO_MAP[from_, plane] = from_
 # normal move
 seq = list(range(1, 8))
 zeros = [0 for _ in range(7)]

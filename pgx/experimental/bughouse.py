@@ -49,6 +49,7 @@ def to_string(action):
         move_uci += underpromotions[action.underpromotion]
     return move_uci
 
+
 def from_fen(fen: str) -> State:
     """_summary_
 
@@ -242,6 +243,7 @@ def to_fen(state: State):
         return fen
 
     return fn(0) + "|" + fn(1)
+
 
 def make_policy_labels(): 
     labels = [Action._from_label(i)._to_string() for i in range(9985)] 

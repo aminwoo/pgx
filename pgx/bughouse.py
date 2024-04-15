@@ -134,7 +134,6 @@ class State(core.State):
     # --- Bughouse specific --- 
     _pocket: Array = jnp.zeros((2, 2, 6), dtype=jnp.int32)
     _clock: Array = jnp.int32([[1200, 1200], [1200, 1200]])
-    _pass_count = jnp.int32(0)
     # # of moves since the last piece capture or pawn move
     _halfmove_count: Array = jnp.int32([0, 0])
     _fullmove_count: Array = jnp.int32([1, 1])  # increase every black move
@@ -907,6 +906,7 @@ def _set_board_num(state, board_num):
     return state
 
 
+@jax.jit
 def _is_promotion(state, action):
     a = Action._from_label(action)
     piece = state._board[a.board_num, a.from_]
