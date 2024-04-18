@@ -170,10 +170,10 @@ def to_fen(state: State):
     """
 
     def fn(board_num):
-        pb = jnp.rot90(state._board[board_num].reshape(8, 8), k=1)
-        pocket = state._pocket[board_num]
+        pb = jnp.rot90(state._board[board_num][0].reshape(8, 8), k=1)
+        pocket = state._pocket[board_num][0]
 
-        if state._turn[board_num] == 1:
+        if state._turn[board_num][0] == 1:
             pb = -jnp.flip(pb, axis=0)
             pocket = pocket[::-1]
         fen = ""
@@ -207,11 +207,11 @@ def to_fen(state: State):
                         fen += " pnbrq"[j]
         fen += " "
         # turn
-        fen += "w " if state._turn[board_num] == 0 else "b "
+        fen += "w " if state._turn[board_num][0] == 0 else "b "
         # castling
-        can_castle_queen_side = state._can_castle_queen_side[board_num]
-        can_castle_king_side = state._can_castle_king_side[board_num]
-        if state._turn[board_num] == 1:
+        can_castle_queen_side = state._can_castle_queen_side[board_num][0]
+        can_castle_king_side = state._can_castle_king_side[board_num][0]
+        if state._turn[board_num][0] == 1:
             can_castle_queen_side = can_castle_queen_side[::-1]
             can_castle_king_side = can_castle_king_side[::-1]
         if not (can_castle_queen_side.any() | can_castle_king_side.any()):
@@ -227,8 +227,8 @@ def to_fen(state: State):
                 fen += "q"
         fen += " "
         # en passant
-        en_passant = state._en_passant[board_num]
-        if state._turn[board_num] == 1:
+        en_passant = state._en_passant[board_num][0]
+        if state._turn[board_num][0] == 1:
             en_passant = _flip_pos(en_passant)
         ep = int(en_passant.item())
         if ep == -1:
@@ -237,9 +237,9 @@ def to_fen(state: State):
             fen += "abcdefgh"[ep // 8]
             fen += str(ep % 8 + 1)
         fen += " "
-        fen += str(state._halfmove_count[board_num].item())
+        fen += str(state._halfmove_count[board_num][0].item())
         fen += " "
-        fen += str(state._fullmove_count[board_num].item())
+        fen += str(state._fullmove_count[board_num][0].item())
         return fen
 
     return fn(0) + "|" + fn(1)
