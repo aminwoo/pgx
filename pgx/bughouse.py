@@ -677,7 +677,7 @@ def _legal_action_mask(state: State):
     )
 
     # PASS action (if we are up time and diagonal players on turn)
-    mask = FALSE
+    mask = mask.at[-1].set(FALSE)
     #mask = mask.at[-1].set((_time_advantage(state) > 0) & (state._turn[0] == state._turn[1]))
 
     return mask
