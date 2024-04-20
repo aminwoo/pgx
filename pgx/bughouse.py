@@ -37,7 +37,7 @@ from pgx._src.struct import dataclass
 from pgx._src.types import Array, PRNGKey
 
 INIT_ZOBRIST_HASH = jnp.uint32([1172276016, 1112364556])
-MAX_TERMINATION_STEPS = 256 
+MAX_TERMINATION_STEPS = 512 
 
 TRUE = jnp.bool_(True)
 FALSE = jnp.bool_(False)
