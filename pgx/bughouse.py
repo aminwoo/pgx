@@ -493,7 +493,7 @@ def _rotate(board):
 
 def _flip(state: State, board_num: Array) -> State:
     return state.replace(  # type: ignore
-        current_player=1-state.current_player,
+        current_player=1 - state.current_player,
         _board=state._board.at[board_num].set(-jnp.flip(state._board[board_num].reshape(8, 8), axis=1).flatten()),
         _turn=state._turn.at[board_num].set(1 - state._turn[board_num]),
         _en_passant=state._en_passant.at[board_num].set(_flip_pos(state._en_passant[board_num])),
@@ -677,7 +677,8 @@ def _legal_action_mask(state: State):
     )
 
     # PASS action (if we are up time and diagonal players on turn)
-    mask = mask.at[-1].set((_time_advantage(state) > 0) & (state._turn[0] == state._turn[1]))
+    mask = FALSE
+    #mask = mask.at[-1].set((_time_advantage(state) > 0) & (state._turn[0] == state._turn[1]))
 
     return mask
 
