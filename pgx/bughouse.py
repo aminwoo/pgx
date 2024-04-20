@@ -297,10 +297,13 @@ def _check_termination(state: State):
         action_mask = jax.lax.select(board_num == 0, state.legal_action_mask[:4992], state.legal_action_mask[4992:9984])
         has_legal_action = action_mask.any() 
 
-        is_checkmate = jax.lax.cond(state._pocket[board_num, 0].any(), 
-                                      lambda: ~has_legal_action & _on_turn(state, board_num), 
-                                      lambda: ~has_legal_action & _on_turn(state, board_num) & ~_legal_drops(state, board_num)
-                                      )
+        is_checkmate = ~has_legal_action & _on_turn(state, board_num)
+
+        #is_checkmate = jax.lax.cond(state._pocket[board_num, 0].any(), 
+        #                              lambda: ~has_legal_action & _on_turn(state, board_num), 
+        #                              lambda: ~has_legal_action & _on_turn(state, board_num) & ~_legal_drops(state, board_num)
+        #                              )
+        
         terminated |= is_checkmate
 
         return terminated, is_checkmate
