@@ -259,6 +259,8 @@ def _step(state: State, action: Array):
 
     def sit(state, a):
         state = _set_current_player(state, 1 - state.current_player)
+        state = _update_history(state, a.board_num)
+        state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
         state = _check_termination(state)
         return state
     
@@ -297,12 +299,10 @@ def _check_termination(state: State):
         action_mask = jax.lax.select(board_num == 0, state.legal_action_mask[:4992], state.legal_action_mask[4992:9984])
         has_legal_action = action_mask.any() 
 
-        is_checkmate = ~has_legal_action & _on_turn(state, board_num)
-
-        #is_checkmate = jax.lax.cond(state._pocket[board_num, 0].any(), 
-        #                              lambda: ~has_legal_action & _on_turn(state, board_num), 
-        #                              lambda: ~has_legal_action & _on_turn(state, board_num) & ~_legal_drops(state, board_num)
-        #                              )
+        is_checkmate = jax.lax.cond(state._pocket[board_num, 0].any(), 
+                                      lambda: ~has_legal_action & _on_turn(state, board_num), 
+                                      lambda: ~has_legal_action & _on_turn(state, board_num) & ~_legal_drops(state, board_num)
+                                      )
         
         terminated |= is_checkmate
 
@@ -680,8 +680,7 @@ def _legal_action_mask(state: State):
     )
 
     # PASS action (if we are up time and diagonal players on turn)
-    mask = mask.at[-1].set(FALSE)
-    #mask = mask.at[-1].set((_time_advantage(state) > 0) & (state._turn[0] == state._turn[1]))
+    mask = mask.at[-1].set((_time_advantage(state) > 0) & (state._turn[0] == state._turn[1]))
 
     return mask
 
