@@ -259,7 +259,6 @@ def _step(state: State, action: Array):
 
     def sit(state, a):
         state = _set_current_player(state, 1 - state.current_player)
-        state = _update_history(state, a.board_num)
         state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
         state = _check_termination(state)
         return state
