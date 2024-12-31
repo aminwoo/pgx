@@ -34,4 +34,6 @@ def benchmark(iterations=100, seed=42):
                 times.append(end - st)
     return np.mean(times)
 
-print(f'Mean step function execution time: {benchmark()}')
+
+if __name__ == "__main__":
+    print(f'Mean step function execution time: {benchmark()}')
