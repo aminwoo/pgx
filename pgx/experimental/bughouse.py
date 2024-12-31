@@ -66,7 +66,6 @@ def from_fen(fen: str) -> State:
     _can_castle_king_side = jnp.ones((2, 2), dtype=jnp.bool_)
     _en_passant = jnp.int32([-1, -1]) 
     _pocket = jnp.zeros((2, 2, 6), dtype=jnp.int32)
-    _clock = jnp.int32([[1200, 1200], [1200, 1200]])
     _halfmove_count  = jnp.int32([0, 0])
     _fullmove_count = jnp.int32([1, 1])  
 
@@ -132,7 +131,6 @@ def from_fen(fen: str) -> State:
         _halfmove_count=_halfmove_count,
         _fullmove_count=_fullmove_count,
         _pocket=_pocket,
-        _clock=_clock,
     )
     state = state.replace(  # type: ignore
         legal_action_mask=jax.jit(_legal_action_mask)(state),
