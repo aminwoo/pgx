@@ -133,7 +133,7 @@ class State(core.State):
     _en_passant: Array = jnp.int32([-1, -1])  # En passant target. Flips.
     # --- Bughouse specific ---
     _pocket: Array = jnp.zeros((2, 2, 6), dtype=jnp.int32)
-    _clock: Array = jnp.int32([[1200, 1200], [1200, 1200]])
+    _can_sit: Array = FALSE
     # # of moves since the last piece capture or pawn move
     _halfmove_count: Array = jnp.int32([0, 0])
     _fullmove_count: Array = jnp.int32([1, 1])  # increase every black move
@@ -235,8 +235,6 @@ class Bughouse(core.Env):
     def _step(self, state: core.State, action: Array, key) -> State:
         del key
         assert isinstance(state, State)
-        delta = 1
-        state = _step_time(state, -delta)
         state = _step(state, action)
         state = jax.lax.cond(
             (MAX_TERMINATION_STEPS <= state._step_count),
@@ -266,7 +264,7 @@ class Bughouse(core.Env):
 def _step(state: State, action: Array):
     a = Action._from_label(action)
 
-    def sit(state, a):
+    def sit(state, _):
         state = _set_current_player(state, 1 - state.current_player)
         state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
         state = _check_termination(state)
@@ -305,6 +303,7 @@ def _update_history(state: State, board_num: Array):
 
 
 def _check_termination(state: State):
+    """Check if game has ended"""
     def board_result(board_num: Array):
         rep = (state._hash_history[board_num] == state._zobrist_hash[board_num]).all(
             axis=1
@@ -366,6 +365,7 @@ def _legal_drops(state: State, board_num: Array):
 
 
 def _apply_move(state: State, a: Action):
+    """Do action to transition to next state"""
     # apply move action
     piece = state._board[a.board_num, a.from_]
     # en passant
@@ -544,6 +544,8 @@ def _apply_move(state: State, a: Action):
 
 
 def _flip_pos(x):
+    """Flip square"""
+
     """
     >>> _flip_pos(jnp.int32(34))
     Array(37, dtype=int32)
@@ -556,10 +558,12 @@ def _flip_pos(x):
 
 
 def _rotate(board):
+    """Rotate board 180 degrees"""
     return jnp.rot90(board, k=1)
 
 
 def _flip(state: State, board_num: Array) -> State:
+    """Flip player on turn"""
     return state.replace(  # type: ignore
         current_player=1 - state.current_player,
         _board=state._board.at[board_num].set(
@@ -579,7 +583,7 @@ def _flip(state: State, board_num: Array) -> State:
         _promoted_pieces=state._promoted_pieces.at[board_num].set(
             jnp.flip(state._promoted_pieces[board_num].reshape(8, 8), axis=1).flatten()
         ),
-        _clock=state._clock.at[board_num].set(state._clock[board_num][::-1]),
+        _can_sit=~state._can_sit,
     )
 
 
@@ -776,10 +780,8 @@ def _legal_action_mask(state: State):
         lambda: mask,
     )
 
-    # PASS action (if we are up time and diagonal players on turn)
-    mask = mask.at[-1].set(
-        (_time_advantage(state) > 0) & (state._turn[0] == state._turn[1])
-    )
+    # SIT action
+    mask = mask.at[-1].set(state._can_sit)
 
     return mask
 
@@ -954,24 +956,16 @@ def _on_turn(state: State, board_num: Array):
     return ret
 
 
-def _time_advantage(state: State):
-    return (
-        state._clock[0, 1 - jnp.int32(_on_turn(state, 0))]
-        - state._clock[1, jnp.int32(_on_turn(state, 1))]
-    )
-
-
 def _mask_moves(state: State):
     mask = state.legal_action_mask
     mask = jax.lax.select(~_on_turn(state, 0), mask.at[:4992].set(FALSE), mask)
     mask = jax.lax.select(~_on_turn(state, 1), mask.at[4992:].set(FALSE), mask)
-    mask = mask.at[-1].set(
-        _time_advantage(state) > 0 & (state._turn[0] == state._turn[1])
-    )
+    mask = mask.at[-1].set(state._can_sit)
     return state.replace(legal_action_mask=mask)  # type: ignore
 
 
 def _observe(state: State, player_id: Array):
+    """Get plane representation of current state"""
     ones = jnp.ones((1, 8, 8), dtype=jnp.float32)
 
     def board2planes(board_num):
@@ -1008,7 +1002,7 @@ def _observe(state: State, player_id: Array):
         )
         opp_king_side_castling_right = ones * state._can_castle_king_side[board_num][1]
 
-        time_advantage = ones * (0.5 + _time_advantage(state) / 300)
+        time_advantage = ones * state._can_sit
 
         return jnp.vstack(
             [
@@ -1038,13 +1032,6 @@ def _observe(state: State, player_id: Array):
     )
     return planes.transpose((1, 2, 0))
 
-
-def _set_clock(state, clock):
-    state = state.replace(_clock=clock)
-    state = state.replace(observation=_observe(state, state.current_player))
-    return state
-
-
 def _set_current_player(state, current_player):
     state = state.replace(current_player=current_player)
     state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
@@ -1065,12 +1052,7 @@ def _set_board_num(state, board_num):
 
 @jax.jit
 def _is_promotion(state, action):
+    """Checks if action is promotion."""
     a = Action._from_label(action)
     piece = state._board[a.board_num, a.from_]
     return (piece == PAWN) & (a.from_ % 8 == 6) & (a.drop < 0)
-
-
-def _step_time(state, delta):
-    return state.replace(  # type: ignore
-        _clock=state._clock.at[0, 0].add(delta).at[1, 0].add(delta)
-    )
