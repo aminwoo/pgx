@@ -266,7 +266,7 @@ def _step(state: State, action: Array):
 
     def sit(state, _):
         state = _set_current_player(state, 1 - state.current_player)
-        state = _set_can_sit(~state._can_sit)
+        state = _set_can_sit(state, ~state._can_sit)
         state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
         state = _check_termination(state)
         return state
