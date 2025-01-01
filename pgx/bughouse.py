@@ -965,6 +965,7 @@ def _mask_moves(state: State):
     return state.replace(legal_action_mask=mask)  # type: ignore
 
 
+@jax.jit
 def _observe(state: State, player_id: Array):
     """Get plane representation of current state"""
     ones = jnp.ones((1, 8, 8), dtype=jnp.float32)
