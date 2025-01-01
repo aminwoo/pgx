@@ -1039,6 +1039,11 @@ def _set_current_player(state, current_player):
     return state
 
 
+def _set_can_sit(state, can_sit):
+    state = state.replace(_can_sit=can_sit)
+    return state
+
+
 def _set_board_num(state, board_num):
     state = state.replace(
         legal_action_mask=jax.lax.select(
