@@ -266,6 +266,7 @@ def _step(state: State, action: Array):
 
     def sit(state, _):
         state = _set_current_player(state, 1 - state.current_player)
+        state = _set_can_sit(~state._can_sit)
         state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
         state = _check_termination(state)
         return state
@@ -1032,6 +1033,8 @@ def _observe(state: State, player_id: Array):
     )
     return planes.transpose((1, 2, 0))
 
+
+@jax.jit
 def _set_current_player(state, current_player):
     state = state.replace(current_player=current_player)
     state = state.replace(legal_action_mask=_legal_action_mask(state))  # type: ignore
@@ -1039,11 +1042,14 @@ def _set_current_player(state, current_player):
     return state
 
 
+
+@jax.jit
 def _set_can_sit(state, can_sit):
     state = state.replace(_can_sit=can_sit)
     return state
 
 
+@jax.jit
 def _set_board_num(state, board_num):
     state = state.replace(
         legal_action_mask=jax.lax.select(
